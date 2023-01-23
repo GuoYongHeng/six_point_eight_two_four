@@ -4,15 +4,15 @@
 
 ## lab1工作内容
 
-你的任务是实现一个分布式的MapReduce，MapReduce由两个程序组成，分别是master和worker。这里实现的MapReduce只有一个master进程，有一个worker进程或者多个并行的worker进程。在现实世界中worker将会运行在一堆机器上，但是在这个lab中你将在一台机器上运行worker进程。worker进程通过rpc和master进程通信。**每一个worker进程都会向master进程请求任务**，从一个或多个文件中读取任务的输入，执行任务然后将输出写到一个或多个文件中。master进程应该可以注意到没有在规定时间（该lab为10s）内完成任务的worker进程，然后将该任务给分配给另一个不同的worker进程。
+你的任务是实现一个分布式的MapReduce，MapReduce由两个程序组成，分别是coordinator和worker。这里实现的MapReduce只有一个coordinator进程，有一个worker进程或者多个并行的worker进程。在现实世界中worker将会运行在一堆机器上，但是在这个lab中你将在一台机器上运行worker进程。worker进程通过rpc和coordinator进程通信。**每一个worker进程都会向coordinator进程请求任务**，从一个或多个文件中读取任务的输入，执行任务然后将输出写到一个或多个文件中。coordinator进程应该可以注意到没有在规定时间（该lab为10s）内完成任务的worker进程，然后将该任务给分配给另一个不同的worker进程。
 
-我们已经给了你一部分启动代码。master和worker的主要程序分别在main/mrcoordinator.go和main/mrworker.go中，不要修改这两个文件。你应该将你的代码放在mr/coordinator.go，mr/worker.go和mr/rpc.go中。
+我们已经给了你一部分启动代码。coordinator和worker的主要程序分别在main/mrcoordinator.go和main/mrworker.go中，不要修改这两个文件。你应该将你的代码放在mr/coordinator.go，mr/worker.go和mr/rpc.go中。
 
 这里是怎么样去运行word-count MapReduce应用。首先，确保word-count插件是刚刚构建的：
 ```shell
 $ go build -buildmode=plugin ../mrapps/wc.go
 ```
-在main目录中，运行master
+在main目录中，运行coordinator
 ```shell
 $ rm mr-out*
 $ go run mrcoordinator.go pg-*.txt
@@ -82,7 +82,7 @@ $
 * 你可以修改mr/worker.go，mr/coordinator.go和mr/rpc.go。您可以临时修改其他文件进行测试，但请确保您的代码适用于原始版本；我们将使用原始版本进行测试。
 * worker应该将中间的Map输出放在当前目录的文件中，稍后worker可以读取他们作为Reduce任务的输入。
 * main/mrcoordinator.go期待mr/coordinator.go去实现一个Done()函数可以在MapReduce job完成的时候返回true，同时，mrcoordinator.go将会退出。
-* 当job完成后，worker进程应该退出。实现该功能的一个简单方法是使用call()的返回值：如果worker无法联系到master，它可以假设master已经退出了，因为job已经完成，因此worker也可以终止。根据你的设计，你可能会发现去master发送给worker一个"please exit"的伪任务是有用的。
+* 当job完成后，worker进程应该退出。实现该功能的一个简单方法是使用call()的返回值：如果worker无法联系到，它可coordinator以假设coordinator已经退出了，因为job已经完成，因此worker也可以终止。根据你的设计，你可能会发现去coordinator发送给worker一个"please exit"的伪任务是有用的。
 
 
 ### 提示
