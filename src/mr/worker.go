@@ -41,16 +41,16 @@ func Worker(mapf func(string, string) []KeyValue,
 		task := Task{}
 		CallGetTask(&task)
 		if task.TaskType == MapTask {
-			fmt.Printf("%v map\n", time.Now())
+			//fmt.Printf("%v map\n", time.Now())
 			MapWorker(mapf, &task)
 		} else if task.TaskType == ReduceTask {
-			fmt.Printf("%v reduce\n", time.Now())
+			//fmt.Printf("%v reduce\n", time.Now())
 			ReduceWorker(reducef, &task)
 		} else if task.TaskType == SleepTask {
-			fmt.Printf("%v sleep\n", time.Now())
+			//fmt.Printf("%v sleep\n", time.Now())
 			time.Sleep(time.Second * 5)
 		} else {
-			fmt.Printf("%v end\n", time.Now())
+			//fmt.Printf("%v end\n", time.Now())
 			break
 		}
 	}
@@ -96,7 +96,7 @@ func MapWorker(mapf func(string, string) []KeyValue, task *Task) {
 	for i, f := range filenames {
 		os.Rename(f.Name(), "mr-"+strconv.Itoa(task.Index)+"-"+strconv.Itoa(i))
 	}
-	fmt.Printf("%v map call report\n", time.Now())
+	//fmt.Printf("%v map call report\n", time.Now())
 	CallReport(task)
 }
 
@@ -134,7 +134,7 @@ func ReduceWorker(reducef func(string, []string) string, task *Task) {
 	}
 	tmpofile.Close()
 	os.Rename(tmpofile.Name(), "mr-out-"+strconv.Itoa(task.RIndex))
-	fmt.Printf("%v reduce call report\n", time.Now())
+	//fmt.Printf("%v reduce call report\n", time.Now())
 	CallReport(task)
 }
 

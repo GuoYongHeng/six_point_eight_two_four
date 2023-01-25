@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -67,24 +66,23 @@ type Coordinator struct {
 
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) GetTask(args *ExampleArgs, reply *Task) error {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
 
 	if c.Status == MapStage {
-		c.Mu.Lock()
-		fmt.Printf("%v %v\n", time.Now(), c.TaskQueLen)
+		//fmt.Printf("%v %v\n", time.Now(), c.TaskQueLen)
 		*reply = <-c.TaskQue
 		reply.Status = Running
 		reply.TaskType = MapTask
 		reply.BeginTime = time.Now()
 		c.TaskQueLen -= 1
 		c.RunningMap[reply.Index] = *reply
-		c.Mu.Unlock()
 		if c.TaskQueLen == 0 {
 			c.Status = ReduceStage
 		}
 	} else if c.Status == ReduceStage {
-		c.Mu.Lock()
 		if len(c.CompletedMap) == c.NMap {
-			fmt.Printf("%v Reduce\n", time.Now())
+			//fmt.Printf("%v Reduce\n", time.Now())
 			*reply = <-c.ReduceQue
 			reply.Status = Running
 			reply.TaskType = ReduceTask
@@ -95,19 +93,20 @@ func (c *Coordinator) GetTask(args *ExampleArgs, reply *Task) error {
 				c.Status = IdleStage
 			}
 		} else {
-			fmt.Printf("%v map running\n", time.Now())
+			//fmt.Printf("%v map running\n", time.Now())
 			reply.TaskType = SleepTask
 		}
-		c.Mu.Unlock()
 	} else if c.Status == IdleStage {
-		fmt.Printf("%v idle\n", time.Now())
+		//fmt.Printf("%v idle\n", time.Now())
 		reply.TaskType = ExitTask
 	}
 	return nil
 }
 
 func (c *Coordinator) Report(info *Task, reply *ExampleReply) error {
-	fmt.Printf("%v report\n", time.Now())
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+	//fmt.Printf("%v report\n", time.Now())
 	if info.TaskType == MapTask {
 
 		_, ok := c.RunningMap[info.Index]
@@ -124,8 +123,6 @@ func (c *Coordinator) Report(info *Task, reply *ExampleReply) error {
 			delete(c.RunningReduce, info.RIndex)
 			info.Status = Ending
 			c.CompletedReduce[info.RIndex] = *info
-		} else {
-			c.Status = NoneStage
 		}
 	}
 	return nil
@@ -156,7 +153,9 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	if c.Status == NoneStage {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+	if len(c.CompletedMap) == c.NMap && len(c.CompletedReduce) == c.NReduce {
 		return true
 	}
 	// Your code here.
