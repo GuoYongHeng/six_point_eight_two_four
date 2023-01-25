@@ -1,10 +1,16 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io/ioutil"
 	"log"
 	"net/rpc"
+	"os"
+	"sort"
+	"strconv"
+	"time"
 )
 
 // Map functions return a slice of KeyValue.
@@ -12,6 +18,11 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+type ByKey []KeyValue
+
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -30,11 +41,17 @@ func Worker(mapf func(string, string) []KeyValue,
 		task := Task{}
 		CallGetTask(&task)
 		if task.TaskType == MapTask {
-			fmt.Println("map")
+			fmt.Printf("%v map\n", time.Now())
+			MapWorker(mapf, &task)
 		} else if task.TaskType == ReduceTask {
-			fmt.Println("reduce")
+			fmt.Printf("%v reduce\n", time.Now())
+			ReduceWorker(reducef, &task)
 		} else if task.TaskType == SleepTask {
-			fmt.Println("sleep")
+			fmt.Printf("%v sleep\n", time.Now())
+			time.Sleep(time.Second * 5)
+		} else {
+			fmt.Printf("%v end\n", time.Now())
+			break
 		}
 	}
 
@@ -43,9 +60,92 @@ func Worker(mapf func(string, string) []KeyValue,
 
 }
 
+func MapWorker(mapf func(string, string) []KeyValue, task *Task) {
+	file, err := os.Open(task.Filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", task.Filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", task.Filename)
+	}
+	file.Close()
+	kva := mapf(task.Filename, string(content))
+	intermediate := []KeyValue{}
+	intermediate = append(intermediate, kva...)
+	interFile := make(map[int][]KeyValue)
+	//划分成NReduce组
+	for _, kv := range intermediate {
+		idx := ihash(kv.Key) % task.NReduce
+		interFile[idx] = append(interFile[idx], kv)
+	}
+	//生成临时文件然后存入临时文件，然后写入成功后再改成正常文件
+	//这里要写入到json文件
+	filenames := make(map[int]*os.File)
+	for idx, kvs := range interFile {
+		tmpofile, _ := ioutil.TempFile("", "mr-*")
+		enc := json.NewEncoder(tmpofile)
+		for _, v := range kvs {
+			enc.Encode(&v)
+			//fmt.Fprintf(tmpofile, "%v %v\n", v.Key, v.Value)
+		}
+		tmpofile.Close()
+		filenames[idx] = tmpofile
+	}
+
+	for i, f := range filenames {
+		os.Rename(f.Name(), "mr-"+strconv.Itoa(task.Index)+"-"+strconv.Itoa(i))
+	}
+	fmt.Printf("%v map call report\n", time.Now())
+	CallReport(task)
+}
+
+func ReduceWorker(reducef func(string, []string) string, task *Task) {
+	intermediate := []KeyValue{}
+	for i := 0; i < task.NMap; i++ {
+		inName := "mr-" + strconv.Itoa(i) + "-" + strconv.Itoa(task.RIndex)
+		inFile, _ := os.Open(inName)
+		dec := json.NewDecoder(inFile)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
+		inFile.Close()
+	}
+
+	sort.Sort(ByKey(intermediate))
+	tmpofile, _ := ioutil.TempFile("", "mr-out-*")
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+		fmt.Fprintf(tmpofile, "%v %v\n", intermediate[i].Key, output)
+		i = j
+	}
+	tmpofile.Close()
+	os.Rename(tmpofile.Name(), "mr-out-"+strconv.Itoa(task.RIndex))
+	fmt.Printf("%v reduce call report\n", time.Now())
+	CallReport(task)
+}
+
 func CallGetTask(rsp *Task) {
 	args := ExampleArgs{}
 	call("Coordinator.GetTask", &args, rsp)
+}
+
+func CallReport(task *Task) {
+	reply := ExampleReply{}
+	call("Coordinator.Report", task, &reply)
 }
 
 // example function to show how to make an RPC call to the coordinator.

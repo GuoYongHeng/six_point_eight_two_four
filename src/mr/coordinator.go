@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ const (
 	NoneStage = iota
 	MapStage
 	ReduceStage
+	IdleStage
 )
 
 // 表示Task所处的状态
@@ -29,12 +31,16 @@ const (
 	MapTask = iota
 	ReduceTask
 	SleepTask
+	ExitTask
 )
 
 // 任务的结构
 type Task struct {
 	Status    int
-	Index     int
+	Index     int //map index
+	RIndex    int //reduce index
+	NReduce   int
+	NMap      int
 	Filename  string
 	BeginTime time.Time
 	TaskType  int
@@ -50,6 +56,8 @@ type Coordinator struct {
 	Mu        sync.Mutex
 
 	TaskQue         chan Task
+	ReduceQue       chan Task
+	ReduceQueLen    int
 	TaskQueLen      int
 	RunningMap      map[int]Task
 	RunningReduce   map[int]Task
@@ -62,21 +70,63 @@ func (c *Coordinator) GetTask(args *ExampleArgs, reply *Task) error {
 
 	if c.Status == MapStage {
 		c.Mu.Lock()
+		fmt.Printf("%v %v\n", time.Now(), c.TaskQueLen)
 		*reply = <-c.TaskQue
 		reply.Status = Running
 		reply.TaskType = MapTask
 		reply.BeginTime = time.Now()
 		c.TaskQueLen -= 1
+		c.RunningMap[reply.Index] = *reply
 		c.Mu.Unlock()
 		if c.TaskQueLen == 0 {
 			c.Status = ReduceStage
 		}
 	} else if c.Status == ReduceStage {
-		//先判断是否还有未运行完的Map
-		return nil
-	} else {
-		//结束
-		return nil
+		c.Mu.Lock()
+		if len(c.CompletedMap) == c.NMap {
+			fmt.Printf("%v Reduce\n", time.Now())
+			*reply = <-c.ReduceQue
+			reply.Status = Running
+			reply.TaskType = ReduceTask
+			reply.BeginTime = time.Now()
+			c.ReduceQueLen -= 1
+			c.RunningReduce[reply.RIndex] = *reply
+			if c.ReduceQueLen == 0 {
+				c.Status = IdleStage
+			}
+		} else {
+			fmt.Printf("%v map running\n", time.Now())
+			reply.TaskType = SleepTask
+		}
+		c.Mu.Unlock()
+	} else if c.Status == IdleStage {
+		fmt.Printf("%v idle\n", time.Now())
+		reply.TaskType = ExitTask
+	}
+	return nil
+}
+
+func (c *Coordinator) Report(info *Task, reply *ExampleReply) error {
+	fmt.Printf("%v report\n", time.Now())
+	if info.TaskType == MapTask {
+
+		_, ok := c.RunningMap[info.Index]
+		if ok {
+			delete(c.RunningMap, info.Index)
+			info.Status = Ending
+			c.CompletedMap[info.Index] = *info
+		}
+
+	} else if info.TaskType == ReduceTask {
+
+		_, ok := c.RunningReduce[info.RIndex]
+		if ok {
+			delete(c.RunningReduce, info.RIndex)
+			info.Status = Ending
+			c.CompletedReduce[info.RIndex] = *info
+		} else {
+			c.Status = NoneStage
+		}
 	}
 	return nil
 }
@@ -106,11 +156,12 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
-
+	if c.Status == NoneStage {
+		return true
+	}
 	// Your code here.
 
-	return ret
+	return false
 }
 
 // create a Coordinator.
@@ -126,6 +177,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.NReduce = nReduce
 	c.TaskQue = make(chan Task, c.NMap)
 	c.TaskQueLen = 0
+	c.ReduceQue = make(chan Task, nReduce)
+	c.ReduceQueLen = 0
 	c.RunningMap = make(map[int]Task)
 	c.CompletedMap = make(map[int]Task)
 	c.RunningReduce = make(map[int]Task)
@@ -137,9 +190,23 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		task.Filename = v
 		task.Index = i
 		task.TaskType = MapTask
+		task.NReduce = c.NReduce
+		task.NMap = c.NMap
 		c.TaskQue <- task
 	}
-	c.TaskQueLen = 0
+	c.TaskQueLen = c.NMap
+
+	for i := 0; i < nReduce; i++ {
+		task := Task{}
+		task.Status = InitTask
+		task.Filename = ""
+		task.RIndex = i
+		task.NMap = c.NMap
+		task.TaskType = ReduceTask
+		task.NReduce = nReduce
+		c.ReduceQue <- task
+	}
+	c.ReduceQueLen = c.NReduce
 
 	c.server()
 	return &c
