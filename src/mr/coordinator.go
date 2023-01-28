@@ -45,6 +45,29 @@ type Task struct {
 	TaskType  int
 }
 
+type TaskQue struct {
+	que []Task
+	mu  sync.Mutex
+}
+
+func (t *TaskQue) Push(task Task) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.que = append(t.que, task)
+}
+
+func (t *TaskQue) Pop() Task {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	ret := t.que[0]
+	t.que = t.que[1:]
+	return ret
+}
+
+func (t *TaskQue) Len() int {
+	return len(t.que)
+}
+
 // 协调器的结构
 type Coordinator struct {
 	// Your definitions here.
@@ -54,10 +77,8 @@ type Coordinator struct {
 	NReduce   int
 	Mu        sync.Mutex
 
-	TaskQue         chan Task
-	ReduceQue       chan Task
-	ReduceQueLen    int
-	TaskQueLen      int
+	InitMapQue      TaskQue
+	InitReduceQue   TaskQue
 	RunningMap      map[int]Task
 	RunningReduce   map[int]Task
 	CompletedMap    map[int]Task
@@ -71,35 +92,31 @@ func (c *Coordinator) GetTask(args *ExampleArgs, reply *Task) error {
 
 	if c.Status == MapStage {
 		//fmt.Printf("%v %v\n", time.Now(), c.TaskQueLen)
-		*reply = <-c.TaskQue
+		if c.InitMapQue.Len() == 0 {
+			reply.TaskType = SleepTask
+			return nil
+		}
+		*reply = c.InitMapQue.Pop()
+		c.RunningMap[reply.Index] = *reply
 		reply.Status = Running
 		reply.TaskType = MapTask
 		reply.BeginTime = time.Now()
-		c.TaskQueLen -= 1
-		c.RunningMap[reply.Index] = *reply
-		if c.TaskQueLen == 0 {
-			c.Status = ReduceStage
-		}
 	} else if c.Status == ReduceStage {
-		if len(c.CompletedMap) == c.NMap {
-			//fmt.Printf("%v Reduce\n", time.Now())
-			*reply = <-c.ReduceQue
-			reply.Status = Running
-			reply.TaskType = ReduceTask
-			reply.BeginTime = time.Now()
-			c.ReduceQueLen -= 1
-			c.RunningReduce[reply.RIndex] = *reply
-			if c.ReduceQueLen == 0 {
-				c.Status = IdleStage
-			}
-		} else {
-			//fmt.Printf("%v map running\n", time.Now())
+		//fmt.Printf("%v Reduce\n", time.Now())
+		if c.InitReduceQue.Len() == 0 {
 			reply.TaskType = SleepTask
+			return nil
 		}
+		*reply = c.InitReduceQue.Pop()
+		c.RunningReduce[reply.RIndex] = *reply
+		reply.Status = Running
+		reply.TaskType = ReduceTask
+		reply.BeginTime = time.Now()
 	} else if c.Status == IdleStage {
 		//fmt.Printf("%v idle\n", time.Now())
 		reply.TaskType = ExitTask
 	}
+	go c.CheckExcept(*reply)
 	return nil
 }
 
@@ -114,6 +131,10 @@ func (c *Coordinator) Report(info *Task, reply *ExampleReply) error {
 			delete(c.RunningMap, info.Index)
 			info.Status = Ending
 			c.CompletedMap[info.Index] = *info
+			if len(c.CompletedMap) == c.NMap {
+				//fmt.Printf("%v to reduce stage\n", time.Now())
+				c.Status = ReduceStage
+			}
 		}
 
 	} else if info.TaskType == ReduceTask {
@@ -123,9 +144,34 @@ func (c *Coordinator) Report(info *Task, reply *ExampleReply) error {
 			delete(c.RunningReduce, info.RIndex)
 			info.Status = Ending
 			c.CompletedReduce[info.RIndex] = *info
+			if len(c.CompletedReduce) == c.NReduce {
+				//fmt.Printf("%v to idle stage\n", time.Now())
+				c.Status = IdleStage
+			}
 		}
 	}
 	return nil
+}
+
+func (c *Coordinator) CheckExcept(task Task) {
+	time.Sleep(time.Second * 10)
+
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+
+	if task.TaskType == MapTask {
+		_, ok := c.RunningMap[task.Index]
+		if ok {
+			delete(c.RunningMap, task.Index)
+			c.InitMapQue.Push(task)
+		}
+	} else if task.TaskType == ReduceTask {
+		_, ok := c.RunningReduce[task.RIndex]
+		if ok {
+			delete(c.RunningReduce, task.RIndex)
+			c.InitReduceQue.Push(task)
+		}
+	}
 }
 
 // an example RPC handler.
@@ -174,10 +220,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.Filenames = files
 	c.NMap = len(files)
 	c.NReduce = nReduce
-	c.TaskQue = make(chan Task, c.NMap)
-	c.TaskQueLen = 0
-	c.ReduceQue = make(chan Task, nReduce)
-	c.ReduceQueLen = 0
+	c.InitMapQue = TaskQue{}
+	c.InitReduceQue = TaskQue{}
 	c.RunningMap = make(map[int]Task)
 	c.CompletedMap = make(map[int]Task)
 	c.RunningReduce = make(map[int]Task)
@@ -191,9 +235,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		task.TaskType = MapTask
 		task.NReduce = c.NReduce
 		task.NMap = c.NMap
-		c.TaskQue <- task
+		c.InitMapQue.Push(task)
 	}
-	c.TaskQueLen = c.NMap
 
 	for i := 0; i < nReduce; i++ {
 		task := Task{}
@@ -203,9 +246,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		task.NMap = c.NMap
 		task.TaskType = ReduceTask
 		task.NReduce = nReduce
-		c.ReduceQue <- task
+		c.InitReduceQue.Push(task)
 	}
-	c.ReduceQueLen = c.NReduce
 
 	c.server()
 	return &c
