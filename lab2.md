@@ -87,11 +87,36 @@ raft.go包含发送RPC(`sendRequestVote()`)和处理传入RPC(`RequestVote()`)�
 * tester在永久关闭一个实例的时候会调用你的Raft的rf.Kill()。你可以使用rf.Kill()检测Kill()是否被调用。你可能希望在所有的循环中执行这个操作，以避免死掉的Raft实例打印出令人困惑的消息。
 * Go RPC仅发送以大写字母开头的结构字段。子结构也必须具有大写的字段名称（例如一个数组中的日志记录）。labgob包将会将告你这一点，不要忽略警告。
 
+确保你在提交Part 2A之前通过了2A测试，这样你就会看到如下内容：
+```shell
+$ go test -run 2A
+Test (2A): initial election ...
+  ... Passed --   3.5  3   58   16840    0
+Test (2A): election after network failure ...
+  ... Passed --   5.4  3  118   25269    0
+Test (2A): multiple elections ...
+  ... Passed --   7.3  7  624  138014    0
+PASS
+ok  	6.5840/raft	16.265s
+$
+```
+每一个"Passed"行包含五个数字，这些是测试花费的时间（以秒为单位）、Raft peers的数量、在测试期间发送RPCS的次数、RPC信息的总字节数和Raft上报的已提交的日志条目的数量。你测试时显示的数字将和这里的不一样。如果愿意，你可以忽略这些数字，但是他们可以帮助你全面检查你的实现中发送的RPC的数量。对于所有的lab2，3，4，如果所有测试花费的时间超过了600秒，或者任何单个测试花费时间超过120s，成绩脚本将会拒绝你的解决方案。
+
+当我们对你提交的内容进行评级的时候，我们运行测试的时候将不会带上`-race`，但是你应该确保你的代码可以通过带有`-race`的测试。
+
 ### Part 2B:log
 
 #### 任务
+实现leader和follower的添加新的日志条目的代码，以便`go test -run 2B`测试的通过
 
 #### 提示
+* 运行`git pull`以获得最新的lab software
+* 你的第一个目标应该是通过TestBasicAgree2B()。通过实现Start()开始，然后编写代码通过`AppendEntries` RPCs来发送和接收新的日志条目，如图2所示。在每个对等端的`applyCh`上发送每个新的已提交的条目。
+* 你需要实现选举限制(论文中的5.4.1节)
+* 在早期的Lab 2B测试中无法达成一致的一种方法是即使领导者还活着，也要进行重复选举。寻找选举定时器管理中的bug，或者在赢得选举后不要立即发送心跳。
+* 你的代码可能包含重复检查某些事件的循环。不要让这些循环连续不间断的执行，因为那将会减慢你的实现的速度，以至于无法通过测试。使用Go的<u>condition variables</u>，或者在每次循环迭代中插入`time.Sleep(10 * time.Millisecond`
+* 为你之后的lab帮个忙，编写干净清晰的代码。如果需要一些想法，可以重新访问[Guidance page](https://pdos.csail.mit.edu/6.824/labs/guidance.html)，其中包含怎么开发和调试代码。
+* 如果你没有通过测试，查看config.go和test_test.go的代码，可以更好地理解测试正在测试什么。config.go中也说明了tester怎么使用Raft API
 
 ### Part 2C:persistence
 
