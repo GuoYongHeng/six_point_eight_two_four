@@ -129,3 +129,43 @@ $
 #### 任务
 
 #### 提示
+
+## State
+|Persistent state on all servers|Description|
+|---|---|
+|currentTerm|---|
+|votedFor|---|
+|log[]|---|
+
+|Volatile state on all servers|Description|
+|---|---|
+|commitIndex|---|
+|lastApplied|---|
+
+|Volatile state on leaders|Description|
+|---|---|
+|nextIndex[]|nextIndex的初始值从新任Leader的最后一条日志开始|
+|matchIndex[]|---|
+
+## AppendEntries RPC
+|Arguments|Description|
+|---|---|
+|term|---|
+|leaderId|---|
+|prevLogIndex|nextIndex[i]-1所指位置的日志的索引|
+|prevLogTerm|上边那个日志所属的Term|
+|entries[]|---|
+|leaderCommit|---|
+
+|Results|Description|
+|---|---|
+|term|---|
+|success|---|
+
+|Receiver implementation|Description|
+|---|---|
+|1|---|
+|2|---|
+|3|---|
+|4|---|
+|5|---|
