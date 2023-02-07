@@ -104,6 +104,20 @@ $
 
 当我们对你提交的内容进行评级的时候，我们运行测试的时候将不会带上`-race`，但是你应该确保你的代码可以通过带有`-race`的测试。
 
+#### Leader选举大致流程
+* 服务器启动时，全都是Follower
+* Follower超过一定时间没有收到心跳，就会成为Candidate，发起选举
+* 开始选举时，Follower首先增加Term，然后转换为Candidate，然后并行向集群其他节点发送请求投票的RPC
+* Candidate会保持当前状态直到以下三件事情之一发生
+  * 当前节点赢得选举成为Leader
+  * 别的节点成为Leader
+  * 一段时间后没有节点成为Leader
+* 一旦Candidate赢得选举成为Leader，便会向其余节点发送心跳，阻止其余节点发起新的选举
+* Candidate等待投票时，可能会受到其他服务器的AppendEntries，如果受到信息中的Term大于等于当前节点Term，则当前节点承认Leader并且状态切换到Follower，否则，拒绝请求
+* 如果某轮选举有多个Follower同时成为Candidate，则可能导致无法选出Leader，此时每个Candidate都会超时，然后每个节点会增加Term来开始新一轮选举
+* Raft算法使用随机选举超时时间的方法来减少上一条情况的发生。
+
+
 ### Part 2B:log
 
 #### 任务
