@@ -61,15 +61,15 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 	currentTerm int
-	voteFor     int
-	logs        []LogEntry
-	nextIndexs  []int
-	matchIndexs []int
+	votedFor    int
+	log         []LogEntry // first index is 1
+	nextIndex   []int
+	matchIndex  []int
 	commitIndex int
 	lastApplied int
 	myStatus    Status
 
-	timer       *time.Ticker
+	timer       *time.Ticker // 定时器，用于选举超时和定期发送心跳
 	voteTimeout time.Duration
 	applyChan   chan ApplyMsg
 }
@@ -209,9 +209,11 @@ type AppendEntriesReply struct {
 }
 
 // example RequestVote RPC handler.
+// 选举策略见论文图2
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
+	// 发起选举节点比当前节点任期小，则拒绝
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
@@ -220,9 +222,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
+	// 发起选举节点和当前节点处于同一任期
 	if args.Term == rf.currentTerm {
 		reply.Term = args.Term
-		if rf.voteFor == args.Candidate {
+		if rf.votedFor == args.Candidate {
 			rf.myStatus = Follower
 			rf.timer.Reset(rf.voteTimeout)
 			reply.VoteGranted = true
@@ -231,15 +234,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			return
 		}
 
-		if rf.voteFor != -1 {
+		if rf.votedFor != -1 {
 			reply.VoteGranted = false
 			reply.VoteErr = VotedThisTerm
 			rf.mu.Unlock()
 			return
 		}
 	}
+	// 发起选举节点任期高于当前节点任期，直接投票
 	rf.currentTerm = args.Term
-	rf.voteFor = args.Candidate
+	rf.votedFor = args.Candidate
 	rf.myStatus = Follower
 	rf.timer.Reset(rf.voteTimeout)
 
@@ -249,8 +253,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Unlock()
 }
 
+// 策略见论文图2
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
+	// 发心跳的旧Leader的Term已经落后了，拒绝
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
@@ -260,7 +266,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.currentTerm = args.Term
-	rf.voteFor = args.LeaderId
+	rf.votedFor = args.LeaderId
 	rf.myStatus = Follower
 	rf.timer.Reset(rf.voteTimeout)
 
@@ -306,6 +312,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		}
 	}
 	rf.mu.Lock()
+	// 如果发起选举期间，已经有了新的Leader胜出
 	if args.Term < rf.currentTerm {
 		rf.mu.Unlock()
 		return false
@@ -313,24 +320,27 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	rf.mu.Unlock()
 
 	switch reply.VoteErr {
+	// 被拒绝投票
 	case VoteReqOutofDate:
 		rf.mu.Lock()
 		rf.myStatus = Follower
 		rf.timer.Reset(rf.voteTimeout)
 		if reply.Term > rf.currentTerm {
 			rf.currentTerm = reply.Term
-			rf.voteFor = -1
+			rf.votedFor = -1
 		}
 		rf.mu.Unlock()
+	// 当前节点太老
 	case CandidateLogTooOld:
 		rf.mu.Lock()
 		rf.myStatus = Follower
 		rf.timer.Reset(rf.voteTimeout)
 		if reply.Term > rf.currentTerm {
 			rf.currentTerm = reply.Term
-			rf.voteFor = -1
+			rf.votedFor = -1
 		}
 		rf.mu.Unlock()
+	// 获得投票
 	case Nil, VotedThisTerm:
 		rf.mu.Lock()
 		if reply.VoteGranted && reply.Term == rf.currentTerm && *voteNum <= len(rf.peers)/2 {
@@ -338,14 +348,15 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		}
 		if *voteNum > len(rf.peers)/2 {
 			*voteNum = 0
+			// 获得过半投票的时候，就选举成功了，之后的成功信息可以忽略掉
 			if rf.myStatus == Leader {
 				rf.mu.Unlock()
 				return ok
 			}
 			rf.myStatus = Leader
-			rf.nextIndexs = make([]int, len(rf.peers))
-			for i, _ := range rf.nextIndexs {
-				rf.nextIndexs[i] = len(rf.logs)
+			rf.nextIndex = make([]int, len(rf.peers))
+			for i, _ := range rf.nextIndex {
+				rf.nextIndex[i] = len(rf.log)
 			}
 			rf.timer.Reset(HeartBeatTimeout)
 		}
@@ -364,6 +375,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	}
 
 	rf.mu.Lock()
+	// 当前节点已经变成了Follower
 	if args.Term < rf.currentTerm {
 		rf.mu.Unlock()
 		return false
@@ -377,13 +389,14 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 			*appendNum++
 		}
 		rf.mu.Unlock()
+	// 心跳被拒
 	case AppendErr_ReqOutofDate:
 		rf.mu.Lock()
 		rf.myStatus = Follower
 		rf.timer.Reset(rf.voteTimeout)
 		if reply.Term > rf.currentTerm {
 			rf.currentTerm = reply.Term
-			rf.voteFor = -1
+			rf.votedFor = -1
 		}
 		rf.mu.Unlock()
 	case AppendErr_LogsNotMatch:
@@ -447,11 +460,13 @@ func (rf *Raft) ticker() {
 			currStatus := rf.myStatus
 			switch currStatus {
 			case Follower:
+				//超时后Follower变成Candidate，发起选举
 				rf.myStatus = Candidate
 				fallthrough
 			case Candidate:
+				//选举超时，即没有选出Leader，则发起下一轮选举
 				rf.currentTerm += 1
-				rf.voteFor = rf.me
+				rf.votedFor = rf.me
 				rf.voteTimeout = time.Duration(rand.Intn(150)+200) * time.Millisecond
 				voteNum := 1
 				rf.timer.Reset(rf.voteTimeout)
@@ -462,13 +477,14 @@ func (rf *Raft) ticker() {
 					voteArgs := &RequestVoteArgs{
 						Term:         rf.currentTerm,
 						Candidate:    rf.me,
-						LastLogIndex: len(rf.logs) - 1,
-						LastLogTerm:  rf.logs[len(rf.logs)-1].Term,
+						LastLogIndex: len(rf.log) - 1,
+						LastLogTerm:  rf.log[len(rf.log)-1].Term,
 					}
 					voteReply := new(RequestVoteReply)
 					go rf.sendRequestVote(i, voteArgs, voteReply, &voteNum)
 				}
 			case Leader:
+				//Leader超时，发送心跳包
 				appendNum := 1
 				rf.timer.Reset(HeartBeatTimeout)
 				for i, _ := range rf.peers {
@@ -482,7 +498,7 @@ func (rf *Raft) ticker() {
 						PrevLogTerm:  0,
 						Logs:         nil,
 						LeaderCommit: rf.commitIndex,
-						LogIndex:     len(rf.logs) - 1,
+						LogIndex:     len(rf.log) - 1,
 					}
 					appendEntriesReply := new(AppendEntriesReply)
 					go rf.sendAppendEntries(i, appendEntriesArgs, appendEntriesReply, &appendNum)
@@ -490,7 +506,6 @@ func (rf *Raft) ticker() {
 			}
 			rf.mu.Unlock()
 		}
-
 	}
 }
 
@@ -512,15 +527,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.myStatus = Follower
-	rf.voteFor = -1
+	rf.votedFor = -1
 	rand.Seed(time.Now().UnixNano())
 	rf.voteTimeout = time.Duration(rand.Intn(150)+200) * time.Millisecond
 	rf.currentTerm = 0
 	rf.commitIndex = 0
 	rf.lastApplied = 0
-	rf.nextIndexs = nil
-	rf.matchIndexs = nil
-	rf.logs = []LogEntry{{0, nil}}
+	rf.nextIndex = nil
+	rf.matchIndex = nil
+	rf.log = []LogEntry{{0, nil}}
 	rf.timer = time.NewTicker(rf.voteTimeout)
 	rf.applyChan = applyCh
 

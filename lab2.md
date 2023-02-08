@@ -71,9 +71,9 @@ raft.go包含发送RPC(`sendRequestVote()`)和处理传入RPC(`RequestVote()`)�
 
 #### 提示
 * 你不能简单的直接去运行你的Raft代码，你应该通过tester来运行他，即`go test -run 2A`
-* 按照论文中的图2，在这里你应该惯出发送和接收RequestVote、与玄驹相关的服务器规则和与leader选举相关的状态
+* 按照论文中的图2，在这里你应该关注发送和接收RequestVote、与选举相关的服务器规则和与leader选举相关的状态
 * 在raft.go中的Raft结构中为leader选举添加图2的状态。你也需要定义一个结构去保存和每个log entry相关的信息
-* 填充`RequestVoteArgs`和`RequestVoteReply`结构。修改`Make()`去创建一个后台协程，该协程在一段时间内没有收到其他对等节点的消息时将会通过发送`RequestVote`来定期开始leader选举。通过这种方式peer将会知道谁是leader，如果已经存在leader的话，或者它自己会编程leader。实现`RequestVote()`RPC函数以便服务器互相投票
+* 填充`RequestVoteArgs`和`RequestVoteReply`结构。修改`Make()`去创建一个后台协程，该协程在一段时间内没有收到其他对等节点的消息时将会通过发送`RequestVote`来定期开始leader选举。通过这种方式peer将会知道谁是leader，如果已经存在leader的话，或者它自己会变成leader。实现`RequestVote()`RPC函数以便服务器互相投票
 * 去实现心跳机制。定义一个`AppendEntries`RPC结构（尽管你可能还不需要所有的参数），并且leader会定期发送他们。编写一个`AppendEntries`RPC处理函数来重设选举超时，以便其他的服务器不会在已经有leader的情况下再成为leader。
 * 确保不同peer的选举超时不会总是同时触发，否则所有peer都只会为自己投票并且没有节点会成为leader
 * tester要求leader每秒发送心跳不超过10次
