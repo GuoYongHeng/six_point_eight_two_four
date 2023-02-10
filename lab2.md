@@ -125,13 +125,41 @@ $
 
 #### 提示
 * 运行`git pull`以获得最新的lab software
-* 你的第一个目标应该是通过TestBasicAgree2B()。通过实现Start()开始，然后编写代码通过`AppendEntries` RPCs来发送和接收新的日志条目，如图2所示。在每个对等端的`applyCh`上发送每个新的已提交的条目。
+* 你的第一个目标应该是通过`TestBasicAgree2B()`。通过实现`Start()`开始，然后编写代码通过`AppendEntries` RPCs来发送和接收新的日志条目，如图2所示。在每个对等端的`applyCh`上发送每个新的已提交的条目。
 * 你需要实现选举限制(论文中的5.4.1节)
 * 在早期的Lab 2B测试中无法达成一致的一种方法是即使领导者还活着，也要进行重复选举。寻找选举定时器管理中的bug，或者在赢得选举后不要立即发送心跳。
 * 你的代码可能包含重复检查某些事件的循环。不要让这些循环连续不间断的执行，因为那将会减慢你的实现的速度，以至于无法通过测试。使用Go的<u>condition variables</u>，或者在每次循环迭代中插入`time.Sleep(10 * time.Millisecond`
 * 为你之后的lab帮个忙，编写干净清晰的代码。如果需要一些想法，可以重新访问[Guidance page](https://pdos.csail.mit.edu/6.824/labs/guidance.html)，其中包含怎么开发和调试代码。
 * 如果你没有通过测试，查看config.go和test_test.go的代码，可以更好地理解测试正在测试什么。config.go中也说明了tester怎么使用Raft API
 
+如果运行的太慢，你的代码可能无法通过即将到来的实验的测试。你可以使用time命令检查你的解决方案的真实耗时和cpu时间。典型的输出如下：
+```shell
+$ time go test -run 2B
+Test (2B): basic agreement ...
+  ... Passed --   0.9  3   16    4572    3
+Test (2B): RPC byte count ...
+  ... Passed --   1.7  3   48  114536   11
+Test (2B): agreement after follower reconnects ...
+  ... Passed --   3.6  3   78   22131    7
+Test (2B): no agreement if too many followers disconnect ...
+  ... Passed --   3.8  5  172   40935    3
+Test (2B): concurrent Start()s ...
+  ... Passed --   1.1  3   24    7379    6
+Test (2B): rejoin of partitioned leader ...
+  ... Passed --   5.1  3  152   37021    4
+Test (2B): leader backs up quickly over incorrect follower logs ...
+  ... Passed --  17.2  5 2080 1587388  102
+Test (2B): RPC counts aren't too high ...
+  ... Passed --   2.2  3   60   20119   12
+PASS
+ok  	6.5840/raft	35.557s
+
+real	0m35.899s
+user	0m2.556s
+sys	0m1.458s
+$
+```
+"ok 6.5840/raft 35.557s"意味着Go测量的2B测试所用的实际时间(wall-clock)为35.557秒，"user 0m2.556s"表示代码消耗了2.556秒的CPU时间，或者实际执行指令花费的时间（而不是等待或休眠）。如果你的解决方案在2B测试中花费的时间超过了1分钟，或者CPU时间超过5秒钟，你以后可能会遇到麻烦。查看时间花费在了哪里，比如休眠或者等待rpc超时花费的时间，未休眠时的循环或者等待条件变量或者channel传递消息所花费的时间，或者发送大量rpc花费的时间。
 ### Part 2C:persistence
 
 #### 任务
