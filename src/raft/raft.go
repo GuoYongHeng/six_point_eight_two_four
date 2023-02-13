@@ -312,7 +312,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.myStatus = Follower
 	rf.timer.Reset(rf.voteTimeout)
 
-	// 不匹配
+	//日志不匹配
 	if args.PrevLogIndex >= len(rf.log) || args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
 		reply.Term = rf.currentTerm
 		reply.Success = false
@@ -320,7 +320,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.mu.Unlock()
 		return
 	}
-
+	// 这条是哪个规则呢？
 	if rf.lastApplied > args.PrevLogIndex {
 		reply.Term = rf.currentTerm
 		reply.Success = false
@@ -334,6 +334,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.log = rf.log[:args.PrevLogIndex+1]
 		rf.log = append(rf.log, args.Logs...)
 	}
+	// 这里应该就是leaderCommit>commitIndex那条规则
 	for rf.lastApplied < args.LeaderCommit {
 		rf.lastApplied++
 		applyMsg := ApplyMsg{
@@ -534,6 +535,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 			LogIndex:     args.LogIndex,
 		}
 		for rf.nextIndex[server] > 0 {
+			// 这里每次不匹配，只是直接向前移动了一步，这样不太好，可以继续优化
 			argsNewa.PrevLogIndex = rf.nextIndex[server] - 1
 			if argsNewa.PrevLogIndex >= len(rf.log) {
 				rf.nextIndex[server]--
@@ -563,6 +565,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 			rf.mu.Unlock()
 			return false
 		}
+		// 如果日志发送的日志已经被提交了，则尝试发送下一条日志
 		rf.nextIndex[server]++
 		if reply.Term > rf.currentTerm {
 			rf.myStatus = Follower
@@ -724,7 +727,6 @@ func (rf *Raft) ticker() {
 					}
 					for rf.nextIndex[i] > 0 {
 						appendEntriesArgs.PrevLogIndex = rf.nextIndex[i] - 1
-						// ??
 						if appendEntriesArgs.PrevLogIndex >= len(rf.log) {
 							rf.nextIndex[i]--
 							continue

@@ -160,6 +160,17 @@ sys	0m1.458s
 $
 ```
 "ok 6.5840/raft 35.557s"意味着Go测量的2B测试所用的实际时间(wall-clock)为35.557秒，"user 0m2.556s"表示代码消耗了2.556秒的CPU时间，或者实际执行指令花费的时间（而不是等待或休眠）。如果你的解决方案在2B测试中花费的时间超过了1分钟，或者CPU时间超过5秒钟，你以后可能会遇到麻烦。查看时间花费在了哪里，比如休眠或者等待rpc超时花费的时间，未休眠时的循环或者等待条件变量或者channel传递消息所花费的时间，或者发送大量rpc花费的时间。
+
+#### 日志复制大致流程
+* 论文图2中指明的日志接受者的一些规则
+  * 如果Leader Term小于接收节点Term，则返回false
+  * 如果接收节点中没有包含这样一条日志，即prevLogIndex位置上的日志的Term可以和prevLogTerm匹配上的日志，则返回false
+  * 如果已经存在的日志和新日志发生了冲突（同样的索引但是不同的Term），那么就删除当前日志及它后边的所有日志
+  * 追加日志中尚未存在的任何新日志
+  * 如果leaderCommit>commitIndex，则设置commitIndex=min(leaderCommit,上一个新日志的索引)
+* 论文5.4节涉及到的规则
+  * Raft 通过比较两份日志中最后一条日志条目的索引值和任期号定义谁的日志比较新。如果两份日志最后的条目的任期号不同，那么任期号大的日志更加新。如果两份日志最后的条目任期号相同，那么日志比较长的那个就更加新
+
 ### Part 2C:persistence
 
 #### 任务
@@ -177,16 +188,16 @@ $
 |---|---|
 |currentTerm|---|
 |votedFor|---|
-|log[]|---|
+|log[]|（初始索引为1）|
 
 |Volatile state on all servers|Description|
 |---|---|
-|commitIndex|---|
-|lastApplied|---|
+|commitIndex|已知被提交的最新的log entry的索引（初始值为0，单调递增）|
+|lastApplied|已经被应用到状态机的最新的log entry的索引（初始值为0，单调递增）|
 
 |Volatile state on leaders|Description|
 |---|---|
-|nextIndex[]|nextIndex的初始值从新任Leader的最后一条日志开始|
+|nextIndex[]|nextIndex的初始值为Leader的最后一个log entry的索引+1|
 |matchIndex[]|---|
 
 ## AppendEntries RPC
@@ -197,7 +208,7 @@ $
 |prevLogIndex|nextIndex[i]-1所指位置的日志的索引|
 |prevLogTerm|上边那个日志所属的Term|
 |entries[]|---|
-|leaderCommit|---|
+|leaderCommit|Leader的commitIndex|
 
 |Results|Description|
 |---|---|
