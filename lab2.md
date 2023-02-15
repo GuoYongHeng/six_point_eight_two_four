@@ -172,16 +172,123 @@ $
   * Raft 通过比较两份日志中最后一条日志条目的索引值和任期号定义谁的日志比较新。如果两份日志最后的条目的任期号不同，那么任期号大的日志更加新。如果两份日志最后的条目任期号相同，那么日志比较长的那个就更加新
 
 ### Part 2C:persistence
+如果一个基于Raft的服务器重启，它应该恢复服务到它离线的位置。这要求Raft可以保持重启后仍然存在持久的状态。论文中图2提到了哪些状态应该被持久化。
 
+一个真正的实现应该在Raft的持久状态改变时将它写入磁盘，并且服务重启后应该从磁盘读取状态。你的实现中不需要使用磁盘，相反，你的代码中应该save和restore持久状态到Persister对象（见persister.go）。无论是谁调用`Raft.Make()`到会提供一个Persister对象，该对象最初持有Raft的最近的持久化状态（如果存在）。Raft应该用Persister对象初始化自己，并且应该在每次状态改变时使用Persister对象来保存他的持久状态。使用Persister的ReadRaftState()和Save函数。
 #### 任务
+通过添加代码去保存和恢复持久状态来完成raft.go中的`persist()`和`readPersist()`。你需要去编码（或序列化）状态为字节数组，以便将其传递给Persister。使用labgob编码器，看`persist()`和`readPersist()`种的注释。labgob类似go的gob编码器，但是如果你尝试编码小字段名的结构体，它将打印错误信息。现在，将`nil`作为第二个参数传递给`persist.Save()`。在你的实现更改持久状态的位置插入对`persist()`的调用。完成此操作后，如果你的其余的实现是正确的，你将会通过所有的2C测试。
+
+你可能需要一次通过多个条目备份nextIndex的优化。查看论文中第七页底部和第八页顶部的内容（灰线标记）。论文中对细节的描述含糊不清，你需要去填补这部分空白。一种可能是拒绝信息包括如下：
+```
+XTerm:  term in the conflicting entry (if any)
+XIndex: index of first entry with that term (if any)
+XLen:   log length
+```
+然后Leader的逻辑可能是这样：
+```
+Case 1: leader doesn't have XTerm:
+  nextIndex = XIndex
+Case 2: leader has XTerm:
+  nextIndex = leader's last entry for XTerm
+Case 3: follower's log is too short:
+  nextIndex = XLen
+```
 
 #### 提示
+* 运行`git pull`去获取最新的代码
+* 2C的测试要求比2A和2B的要求更高，失败可能是因为你的2A或2B的代码有问题
+
+你的代码应该通过所有的2C的测试（如下所示），以及2A和2B的测试。
+```
+$ go test -run 2C
+Test (2C): basic persistence ...
+  ... Passed --   5.0  3   86   22849    6
+Test (2C): more persistence ...
+  ... Passed --  17.6  5  952  218854   16
+Test (2C): partitioned leader and one follower crash, leader restarts ...
+  ... Passed --   2.0  3   34    8937    4
+Test (2C): Figure 8 ...
+  ... Passed --  31.2  5  580  130675   32
+Test (2C): unreliable agreement ...
+  ... Passed --   1.7  5 1044  366392  246
+Test (2C): Figure 8 (unreliable) ...
+  ... Passed --  33.6  5 10700 33695245  308
+Test (2C): churn ...
+  ... Passed --  16.1  5 8864 44771259 1544
+Test (2C): unreliable churn ...
+  ... Passed --  16.5  5 4220 6414632  906
+PASS
+ok  	6.5840/raft	123.564s
+$
+```
+在提交之前运行多次测试并检查每次运行打印的PASS是个好主意。
+```shell
+$ for i in {0..10}; do go test; done
+```
 
 ### Part 2D:log compaction
+按照现在的情况，重启服务器会重放完整的Raft log去恢复它的状态。然而，对于一个长时间运行的服务来说，永远记住完整的Raft log是不现实的。相反，你将会修改Raft与一个这样的服务来合作，该服务会不时的持久化存储他们状态的快照，此时Raft会丢弃快照之前的日志条目。结果是更少量的持久化数据和更快的重启速度。然而，现在可能跟随者落后太多以至于leader丢弃了跟随者需要赶上的日志条目。leader必须发送一个快照加上快照之后的日志条目。论文中的第7节概述了该方案。你需要去设计方案细节。
+
+你可能会发现参考[Raft交互图](https://pdos.csail.mit.edu/6.824/notes/raft_diagram.pdf)有助于理解复制服务和Raft的通信方式。
+
+你的服务必须提供以下函数，服务可以使用其状态的序列化快照调用该函数。
+```go
+Snapshot(index int, snapshot []byte)
+```
+
+在实验2D中，测试周期的调用Snapshot()。在实验3中，你将会写一个调用Snapshot的key/value服务器。snapshot将会包含完成的key/value对表格。服务层面在每个对等点调用Snapshot()（不仅仅是leader）。
+
+index参数指明快照中反应的最高的log entry。Raft应该丢弃在他之前的log entries。你需要去修改你的Raft代码以在仅存储日志尾部的同时进行操作。
+
+你需要去实现论文中讨论的InstallSnapshot RPC，他允许Raft leader去告诉落后的Raft对端节点用snapshot去替换他的状态。你可能需要仔细考虑InstallSnapshot应如何与图2中的状态和规则交互。
+
+当跟随者的Raft代码接收到一个InstallSnapshot RPC，他可以使用applyCh去发送snapshot到ApplyMsg中的服务。ApplyMsg结构体早就定义了你需要的字段（包括测试期望的字段）。请注意这些快照只会推进服务状态，不会导致它向后移动。
+
+如果服务器崩溃，他必须从持久化数据中重新启动。你的Raft应该保留Raft状态和响应的快照。使用persister.Save()的第二个参数去保存快照。如果没有快照，则第二个参数传送nil。
+
+当服务器重启的使用，应用层读取持久化的快照并且恢复它保存的状态。
 
 #### 任务
+实现Snapshot()和InstallSnapshot RPC，以及更改Raft来支持这些（例如，修剪日志的操作）。当你的解决方案完整的通过2D测试（以及之前所有的实验2测试），你的解决方案就完成了。
 
 #### 提示
+* git pull确保你有最新的代码
+* 修改你的代码的一个好的开始时以便它能够仅从某个索引X开始的日志部分。最初，你可以设置X为0并运行2B/2C测试。然后让Snapshot(index)丢弃index之前的的日志，然后设置X为index。如果一切顺利，你现在应该可以通过2D的第一个测试。
+* 你不能存储日志到Go切片中，也无法使用Go切片索引与Raft日志索引互换使用。你需要以一种考虑日志丢弃部分的方式对切片进行索引。
+* 下一步：让leader发送InstallSnapshot RPC，如果它没有更新追随者所需要的条目。
+* 在单个InstallSnapshot RPC发送整个snapshot。不要实现图13中的用于拆分快照的offset机制。
+* Raft必须允许Go垃圾收集器释放和重新使用内存的方式丢弃旧的日志条目，这要求对丢弃的日志条目没有可访问的引用（指针）。
+* 即使日志被修剪，你的实现仍然需要在AppendEntries RPC中的新条目之前正确发送条目的term和index。这可能需要保存并引用最新的快照lastIncludedTerm/lastIncludedIndex（考虑是否应该保留）。
+* 没有-race的全套实验2测试（2A+2B+2C+2D）消耗的合理时间是6分钟真实时间和1分钟CPU时间。当使用-race运行的时候，大约是10分钟的真实时间和2分钟的CPU时间。
+
+你应该通过所有的2D测试（如下所示），以及2A，2B和2C的测试。
+```shell
+$ go test -run 2D
+Test (2D): snapshots basic ...
+  ... Passed --  11.6  3  176   61716  192
+Test (2D): install snapshots (disconnect) ...
+  ... Passed --  64.2  3  878  320610  336
+Test (2D): install snapshots (disconnect+unreliable) ...
+  ... Passed --  81.1  3 1059  375850  341
+Test (2D): install snapshots (crash) ...
+  ... Passed --  53.5  3  601  256638  339
+Test (2D): install snapshots (unreliable+crash) ...
+  ... Passed --  63.5  3  687  288294  336
+Test (2D): crash and restart all servers ...
+  ... Passed --  19.5  3  268   81352   58
+PASS
+ok      6.5840/raft      293.456s
+```
+
+
+
+
+
+
+
+
+
+
 
 ## State
 |Persistent state on all servers|Description|
