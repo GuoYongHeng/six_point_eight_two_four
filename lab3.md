@@ -97,3 +97,44 @@ PASS
 ok  	6.5840/kvraft	290.184s
 ```
 每个Passed后面的数字是实时秒数，对等点数，发送的RPC数（包括客户端RPC），和执行的key/value操作数（Clerk Get/Put/Append调用）。
+
+
+#### B部分：带快照的Key/Value服务
+就目前情况而言，你的key/value服务器还不能调用你的Raft库的Snapshot()函数，因此重启服务器将会重放完整持久化的raft log来使其恢复状态。现在你将会修改kvserver以与Raft协作节省log控件，并且使用lab 2D中的Raft的Snapshot()来减少重启时间。
+
+测试者将maxraftstate参数传递到你的StartKVServer()中。maxraftstate指明你的持久化Raft状态的字节数限制（包括日志，但是不包括快照）。你应该对比maxraftstate和persister.RaftStateSize()。无论何时当你的key/value服务检测到Raft状态的尺寸接近阈值时，它应该调用Raft的Snapshot来保存快照。如果maxraftstate为-1，则不需要进行快照。maxraftstate适用于作为第一个参数传递给persister.Save()的GOB编码字节。
+
+#### 任务
+修改你的kvserver，以便它可以检测到Raft状态何时增长的太大，然后让Raft创建快照。当一个kvserver重启时，它应该从persister读取快照并从快照恢复状态。
+
+#### 提示
+* 思考何时kvserver应该创建对其状态进行快照并且快照应该包含什么。Raft使用Save()将每个快照连同相应的Raft状态存储的可持久化对象中。你可以使用ReadSnapshot()读取最新存储的快照。
+* 你的kvserver必须能够跨检测点探测到日志中的重复操作，因此你用于检查它们的任何状态都必须包含在快照中。
+* 将存储快照的结构的所有字段大写
+* 你的Raft库可能在本实验中暴露错误。如果你对Raft实现进行更改，请确保他们仍然可以通过Lab 2中的测试。
+* Lab 3测试的合理时间是400秒的显示时间和700秒的CPU时间。此外，go test -run TestSnapshotSize花费的现实时间应该小于20秒。
+
+你的代码应该通过3B测试（如此处例子所示）以及3A测试（并且你的Raft必须仍然可以通过Lab 2的测试）。
+```shell
+$ go test -run 3B
+Test: InstallSnapshot RPC (3B) ...
+  ... Passed --   4.0  3   289   63
+Test: snapshot size is reasonable (3B) ...
+  ... Passed --   2.6  3  2418  800
+Test: ops complete fast enough (3B) ...
+  ... Passed --   3.2  3  3025    0
+Test: restarts, snapshots, one client (3B) ...
+  ... Passed --  21.9  5 29266 5820
+Test: restarts, snapshots, many clients (3B) ...
+  ... Passed --  21.5  5 33115 6420
+Test: unreliable net, snapshots, many clients (3B) ...
+  ... Passed --  17.4  5  3233  482
+Test: unreliable net, restarts, snapshots, many clients (3B) ...
+  ... Passed --  22.7  5  3337  471
+Test: unreliable net, restarts, partitions, snapshots, many clients (3B) ...
+  ... Passed --  30.4  5  2725  274
+Test: unreliable net, restarts, partitions, snapshots, random keys, many clients (3B) ...
+  ... Passed --  37.7  7  8378  681
+PASS
+ok  	6.5840/kvraft	161.538s
+```
