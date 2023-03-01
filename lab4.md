@@ -100,3 +100,69 @@ Query RPC的参数是一个配置号。shardctrler回复具有该编号的配置
 
 #### B部分：分片的key/value服务器
 **重点：执行git pull获取最新代码**
+
+现在你将会构建shardkv，一个分片容错键值存储系统。你将会修改shardkv/client.go，shardkv/common.go和shardkv/server.go。
+
+每个shardkv服务器都作为副本组的一部分运行。每个副本组为一些键控件分片提供Get/Put/Append操作。使用client.go中的key2shard()来查找key属于哪个分片。多副本组合作为完整的分片集合提供服务。shardctrler服务的单个实例将分片分配给副本组。当这个分配发生变化的时候，副本组必须将分片传递给另一个，同时确保客户端不会看到不一致的相应。
+
+你的存储系统必须为使用它的客户端接口提供一个可线性化的接口。也就是说，对shardkv/client.go中的Clerk.Get()，Clerk.Put()和Clerk.Append()方法的完整的应用程序调用必须以相同顺序作用到所有的副本中。Clerk.Get()应该看到最近的Put/Append写入同一个键的值。即使Get和Put几乎与配置改变同时到达，这也必须为真。
+
+只有当分片的Raft副本组中的大多数服务器都处于活动状态并且可以相互通信并且可以与大多数shardctrler服务器通信是，你的每个分片才可以做出进展。即使某副本组中的少数服务器已经挂了，或者暂时不可达或者运行缓慢，你的实现也必须可以运行（服务请求可以根据需要重新配置）。
+
+一个shardkv服务器只是一个副本组的成员。给定副本组中的服务器集合永远不会改变。
+
+我们为你提供client.go的代码，该代码将每个RPC发送到负责RPC key的副本组。如果不分组表示它不为这个key负责，它将会重试。在这种情况下，客户端代码向分片控制器请求最新配置并充实。作为处理重复客户端RPC请求的一部分，你必须修改client.go，就像在kvraft实验中那样。
+
+当你完成后，你的代码应该通过挑战测试之外的所有shardkv测试。
+```shell
+$ cd ~/6.5840/src/shardkv
+$ go test
+Test: static shards ...
+  ... Passed
+Test: join then leave ...
+  ... Passed
+Test: snapshots, join, and leave ...
+  ... Passed
+Test: servers miss configuration changes...
+  ... Passed
+Test: concurrent puts and configuration changes...
+  ... Passed
+Test: more concurrent puts and configuration changes...
+  ... Passed
+Test: concurrent configuration change and restart...
+  ... Passed
+Test: unreliable 1...
+  ... Passed
+Test: unreliable 2...
+  ... Passed
+Test: unreliable 3...
+  ... Passed
+Test: shard deletion (challenge 1) ...
+  ... Passed
+Test: unaffected shard access (challenge 2) ...
+  ... Passed
+Test: partial migration shard access (challenge 2) ...
+  ... Passed
+PASS
+ok  	6.5840/shardkv	101.503s
+$
+```
+**注意：你的服务器不应该调用分片控制器的Join程序。测试人员将会在适当地时候调用Join()**
+
+#### 任务
+* 你的首要任务是通过shardkv测试。在这个测试中，只有一个分片分配，因此你的代码应该和lab 3服务器的代码非常相似。最大的修改久石让你的服务器探测配置何时发生并开始接受其key于它现在拥有的分片匹配的请求。
+
+现在你的解决方案适用于静态分片情况，是时候解决配置更爱的问题了。你需要让你的服务器监视配置更改，并在检测到配置更改时启动分片迁移过程。如果一个副本组丢失了一个分片，他必须立即停止对该分片中的键的请求提供服务，并且开始将该分片的数据迁移到接管所有权的副本。如果一个副本组获得一个分片，他需要等待让前任所有者在接受对该分钱的请求之前发送完旧的数据。
+
+* 在配置更改期间实现分片迁移。确保副本组中的所有服务器逗她他们执行的操作序列中的同一点执行迁移，以便他们都接受或者拒绝并发的客户端请求。在进行后面的测试之前，你应该专注于通过第二个才测试（join然后leave）。当你通过所有测试（但不包括TestDelete）时，你就完成了此任务。
+
+**注意：你的服务器需要周期的轮询shardctrler以了解新的配置。测试预计你的代码大约每100毫秒轮询一次。更频繁的轮询也是可以的，但是太少的话可能会导致问题**
+
+**注意：服务器需要互相发送RPC，以便在配置更改期间传输分片。shardctrler的Config结构包含服务器名字，但是你需要labrpc.ClientEnd才能发送RPC。你应该使用传递给StartServer()的make_end()函数将服务器名称转换为ClientEnd。shardkv/client.go包含执行该操作的代码。**
+
+#### 提示
+* 将代码添加到server.go以定期从shardctrler获取最新配置，并添加代码以在接收组不负责客户端key的分片时拒绝客户端请求。你将会通过第一个测试。
+* 
+
+
+### 下边的是无学分挑战，经历有限，暂时不考虑了
