@@ -7,3 +7,5 @@
 [lab3](https://github.com/GuoYongHeng/six_point_eight_two_four/blob/main/lab3.md)
 
 [lab4](https://github.com/GuoYongHeng/six_point_eight_two_four/blob/main/lab4.md)
+
+[paper](./paper.md)
